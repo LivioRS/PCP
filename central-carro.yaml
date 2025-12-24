@@ -1,0 +1,98 @@
+esphome:
+  name: central-carro
+  friendly_name: "Central do Carro"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+  hardware_uart: USB_SERIAL_JTAG  # C3 usa USB nativo
+
+api:
+  encryption:
+    key: "kS+jlR5GULg/lNa2ZzdYWqlda2PRxWBw4BORtqrbkDE="
+
+ota:
+  - platform: esphome
+    password: "682f567e3647a9403e277a02a91cd3aa"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Deep sleep para economizar bateria
+  power_save_mode: light
+
+  ap:
+    ssid: "Central_Reserva"
+    password: "SenhaReserva123"
+
+captive_portal:
+
+safe_mode:
+  boot_is_good_after: 30s
+
+# BLE otimizado para C3
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms      # Otimizado para BLE 5.0
+    window: 30ms         # Baixo consumo
+    active: true
+    continuous: false    # Economia de energia
+
+switch:
+  - platform: gpio
+    name: "Trava Porta"
+    pin: GPIO4
+    id: trava
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - delay: 500ms
+      - switch.turn_off: trava
+
+  - platform: gpio
+    name: "Destrava Porta"
+    pin: GPIO5           # C3 tem menos pinos, ajustado
+    id: destrava
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - delay: 500ms
+      - switch.turn_off: destrava
+
+binary_sensor:
+  - platform: ble_presence
+    mac_address: "11:89:9a:a3:56:96"
+    name: "Chave Próxima"
+    id: chave_presente
+    device_class: presence
+    on_press:
+      - logger.log: "BLE Encontrado - Destravar"
+      - switch.turn_on: destrava
+    on_release:
+      - logger.log: "BLE Perdido - Travar"
+      - delay: 30s  # Delay para não travar imediatamente
+      - switch.turn_on: trava
+
+sensor:
+  - platform: ble_rssi
+    mac_address: "11:89:9a:a3:56:96"
+    name: "Sinal da Chave"
+    id: sinal_chave
+    filters:
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 2
+
+  - platform: wifi_signal
+    name: "Sinal Wi-Fi"
+    update_interval: 120s  # Reduzido para economizar
+
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 300s
+
