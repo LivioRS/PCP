@@ -1,0 +1,669 @@
+substitutions:
+  device_name: voice-assistant-cores3
+  friendly_name: "Assistente CoreS3"
+
+  # Matriz 16x16 WS2812 (DIN)
+  led_pin: GPIO2
+  led_count: "256"
+
+  # I2S (CoreS3) - se áudio não funcionar, esses pinos são o 1º lugar pra ajustar
+  i2s_lrclk_pin: GPIO33
+  i2s_bclk_pin: GPIO34
+  mic_din_pin: GPIO14
+  spk_dout_pin: GPIO13
+  spk_amp_enable_pin: GPIO46
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: "CoreS3 + Matriz WS2812 16x16 + Assist (HA) + Notificações + Clima"
+  on_boot:
+    priority: 600
+    then:
+      - output.turn_on: spk_amp_enable
+      - script.execute: idle_loop
+
+esp32:
+  board: m5stack-cores3
+  framework:
+    type: esp-idf
+    version: recommended
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "CoreS3-Assist"
+    password: !secret ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  services:
+    - service: notify
+      variables:
+        message: string
+        type: string   # info, warning, alert, success, doorbell, alarm
+        duration: int  # segundos
+        priority: int  # 1..3
+      then:
+        - lambda: |-
+            id(notification_message) = message;
+            id(notification_type) = type;
+            id(notification_duration_s) = duration;
+            id(notification_priority) = priority;
+            id(has_notification) = true;
+            if (priority >= 3) {
+              id(va).stop();
+            }
+        - script.execute: show_notification
+
+    - service: update_weather
+      variables:
+        temperature: float
+        condition: string  # sunny, cloudy, rainy, stormy, snowy
+        humidity: int
+      then:
+        - lambda: |-
+            id(weather_temp) = temperature;
+            id(weather_condition) = condition;
+            id(weather_humidity) = humidity;
+
+ota:
+  password: !secret ota_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: America/Sao_Paulo
+
+globals:
+  - id: has_notification
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: notification_message
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: notification_type
+    type: std::string
+    restore_value: no
+    initial_value: '"info"'
+  - id: notification_duration_s
+    type: int
+    restore_value: no
+    initial_value: "5"
+  - id: notification_priority
+    type: int
+    restore_value: no
+    initial_value: "1"
+
+  # Idle display: 0 relógio, 1 respiração, 2 clima; auto alterna a cada 20s
+  - id: idle_mode
+    type: int
+    restore_value: yes
+    initial_value: "0"
+  - id: idle_auto
+    type: bool
+    restore_value: yes
+    initial_value: "true"
+  - id: last_mode_switch_ms
+    type: unsigned long
+    restore_value: no
+    initial_value: "0"
+
+  # Weather cache
+  - id: weather_temp
+    type: float
+    restore_value: yes
+    initial_value: "25.0"
+  - id: weather_condition
+    type: std::string
+    restore_value: yes
+    initial_value: '"sunny"'
+  - id: weather_humidity
+    type: int
+    restore_value: yes
+    initial_value: "50"
+
+output:
+  - platform: gpio
+    id: spk_amp_enable
+    pin: ${spk_amp_enable_pin}
+
+light:
+  - platform: neopixelbus
+    id: matrix
+    name: "Matriz 16x16"
+    type: GRB
+    variant: WS2812
+    pin: ${led_pin}
+    num_leds: ${led_count}
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    method:
+      type: esp32_rmt
+      channel: 0
+    color_correct: [70%, 70%, 70%]
+    gamma_correct: 2.8
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: ${i2s_lrclk_pin}
+    i2s_bclk_pin: ${i2s_bclk_pin}
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: ${mic_din_pin}
+    adc_type: external
+    pdm: false
+    channel: left
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+speaker:
+  - platform: i2s_audio
+    id: spk
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: ${spk_dout_pin}
+    dac_type: external
+    channel: mono
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+voice_assistant:
+  id: va
+  microphone: mic
+  speaker: spk
+  # DICA: se o wake word der trabalho no início, deixe false e use o botão "Iniciar Assist"
+  use_wake_word: true
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+
+  on_wake_word_detected:
+    - script.execute: anim_wake
+  on_listening:
+    - script.execute: anim_listening
+  on_stt_vad_end:
+    - script.execute: anim_thinking
+  on_tts_start:
+    - script.execute: anim_speaking
+  on_end:
+    - delay: 300ms
+    - script.execute: idle_loop
+    - voice_assistant.start_continuous:
+  on_error:
+    - script.execute: anim_error
+    - delay: 2s
+    - script.execute: idle_loop
+    - voice_assistant.start_continuous:
+
+select:
+  - platform: template
+    name: "Idle: modo"
+    id: idle_mode_select
+    optimistic: true
+    options:
+      - "Automático"
+      - "Relógio"
+      - "Respiração"
+      - "Clima"
+    initial_option: "Automático"
+    on_value:
+      - lambda: |-
+          if (x == "Automático") {
+            id(idle_auto) = true;
+          } else {
+            id(idle_auto) = false;
+            if (x == "Relógio") id(idle_mode) = 0;
+            else if (x == "Respiração") id(idle_mode) = 1;
+            else if (x == "Clima") id(idle_mode) = 2;
+          }
+
+switch:
+  - platform: template
+    name: "Assistente Ativo"
+    id: assistant_switch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - output.turn_on: spk_amp_enable
+      - script.execute: idle_loop
+      - voice_assistant.start_continuous:
+    on_turn_off:
+      - voice_assistant.stop:
+      - light.turn_off: matrix
+
+button:
+  - platform: template
+    name: "Iniciar Assist (manual)"
+    on_press:
+      - voice_assistant.start:
+
+  - platform: template
+    name: "Teste: 🔴 vermelho"
+    on_press:
+      - script.execute: fill_red
+  - platform: template
+    name: "Teste: 🟢 verde"
+    on_press:
+      - script.execute: fill_green
+  - platform: template
+    name: "Teste: 🔵 azul"
+    on_press:
+      - script.execute: fill_blue
+  - platform: template
+    name: "Teste: 🔔 notificação (doorbell)"
+    on_press:
+      - lambda: |-
+          id(notification_type) = "doorbell";
+          id(notification_message) = "Alguém na porta";
+          id(notification_duration_s) = 6;
+          id(notification_priority) = 2;
+          id(has_notification) = true;
+      - script.execute: show_notification
+
+  - platform: restart
+    name: "Reiniciar"
+
+script:
+  # ===== util =====
+  - id: fill_red
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(255,0,0);
+          l->schedule_show();
+  - id: fill_green
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,255,0);
+          l->schedule_show();
+  - id: fill_blue
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,0,255);
+          l->schedule_show();
+
+  # ===== idle loop (relógio/respiração/clima) =====
+  - id: idle_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return !id(has_notification) && !id(va).is_running();'
+          then:
+            - lambda: |-
+                const unsigned long now = millis();
+                if (id(idle_auto) && (now - id(last_mode_switch_ms) > 20000)) {
+                  id(idle_mode) = (id(idle_mode) + 1) % 3;
+                  id(last_mode_switch_ms) = now;
+                }
+            - script.execute: render_idle_frame
+            - delay: 100ms
+
+  - id: render_idle_frame
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          const int cx = 8, cy = 8;
+
+          // Fundo
+          for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,0,5);
+
+          if (id(idle_mode) == 0) {
+            // ===== RELÓGIO =====
+            auto t = id(ha_time).now();
+            if (t.is_valid()) {
+              int h = t.hour % 12;
+              int m = t.minute;
+              int s = t.second;
+              const float deg2rad = 0.0174532925f;
+              const float ha = (h * 30.0f + m * 0.5f) * deg2rad - 1.5708f;
+              const float ma = (m * 6.0f) * deg2rad - 1.5708f;
+              const float sa = (s * 6.0f) * deg2rad - 1.5708f;
+
+              for (int len = 0; len <= 4; len++) {
+                int x = cx + (int)(len * cosf(ha));
+                int y = cy + (int)(len * sinf(ha));
+                if (x>=0 && x<16 && y>=0 && y<16) l->get().remote_values[x*16+y] = Color(255,50,50);
+              }
+              for (int len = 0; len <= 6; len++) {
+                int x = cx + (int)(len * cosf(ma));
+                int y = cy + (int)(len * sinf(ma));
+                if (x>=0 && x<16 && y>=0 && y<16) l->get().remote_values[x*16+y] = Color(50,255,50);
+              }
+              for (int len = 0; len <= 7; len++) {
+                int x = cx + (int)(len * cosf(sa));
+                int y = cy + (int)(len * sinf(sa));
+                if (x>=0 && x<16 && y>=0 && y<16) l->get().remote_values[x*16+y] = Color(50,150,255);
+              }
+            }
+            l->get().remote_values[cx*16+cy] = Color(200,200,200);
+
+          } else if (id(idle_mode) == 1) {
+            // ===== RESPIRAÇÃO =====
+            static float breath = 0.0f;
+            breath += 0.05f;
+            const float br = 0.12f + 0.10f * sinf(breath);
+            for (int i = 0; i < ${led_count}; i++) {
+              int x = i / 16;
+              int y = i % 16;
+              float d = sqrtf((x-cx)*(x-cx) + (y-cy)*(y-cy));
+              if (d < 6.0f) {
+                int blue = (int)(255 * br * (1.0f - d/8.0f));
+                int cyan = (int)(120 * br * (1.0f - d/8.0f));
+                l->get().remote_values[i] = Color(0, cyan, blue);
+              }
+            }
+
+          } else {
+            // ===== CLIMA =====
+            const float temp = id(weather_temp);
+            const std::string cond = id(weather_condition);
+
+            // Ícone simples (topo-centro)
+            if (cond == "sunny") {
+              for (int x = 5; x <= 10; x++) for (int y = 3; y <= 8; y++) l->get().remote_values[x*16+y] = Color(255,200,0);
+            } else if (cond == "cloudy") {
+              for (int x = 4; x <= 11; x++) for (int y = 4; y <= 7; y++) l->get().remote_values[x*16+y] = Color(140,140,140);
+            } else if (cond == "rainy") {
+              for (int x = 4; x <= 10; x++) for (int y = 3; y <= 6; y++) l->get().remote_values[x*16+y] = Color(90,90,110);
+              static int rain = 0;
+              for (int d = 0; d < 5; d++) {
+                int x = 4 + d*2;
+                int y = 7 + ((rain + d) % 7);
+                if (y < 15) l->get().remote_values[x*16+y] = Color(0,100,255);
+              }
+              rain++;
+            } else if (cond == "stormy") {
+              for (int x = 4; x <= 11; x++) for (int y = 3; y <= 6; y++) l->get().remote_values[x*16+y] = Color(40,40,55);
+              static int flash = 0;
+              if ((flash++ % 20) < 3) {
+                int bolt[] = {7*16+6, 7*16+7, 8*16+7, 8*16+8, 9*16+8, 9*16+9};
+                for (int i = 0; i < 6; i++) l->get().remote_values[bolt[i]] = Color(255,255,0);
+              }
+            } else if (cond == "snowy") {
+              static int snow = 0;
+              for (int f = 0; f < 10; f++) {
+                int x = (f*3 + (snow % 3)) % 16;
+                int y = (f*5 + snow) % 16;
+                l->get().remote_values[x*16+y] = Color(200,200,255);
+              }
+              snow++;
+            }
+
+            // Barra de temperatura (2 linhas embaixo)
+            int r=0,g=0,b=255;
+            if (temp < 15) { r=0; g=110; b=255; }
+            else if (temp < 25) { r=0; g=255; b=120; }
+            else if (temp < 30) { r=255; g=200; b=0; }
+            else { r=255; g=60; b=0; }
+
+            int w = (int)((temp / 40.0f) * 16.0f);
+            if (w < 0) w = 0;
+            if (w > 16) w = 16;
+            for (int x = 0; x < w; x++) {
+              l->get().remote_values[x*16+14] = Color(r,g,b);
+              l->get().remote_values[x*16+15] = Color(r/2,g/2,b/2);
+            }
+          }
+
+          l->schedule_show();
+
+  # ===== assist animations (simples/estáveis) =====
+  - id: anim_wake
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int r = 0; r <= 12; r++) {
+            for (int i = 0; i < ${led_count}; i++) {
+              int x = i / 16, y = i % 16;
+              float d = sqrtf((x-8)*(x-8) + (y-8)*(y-8));
+              if (fabsf(d - r) < 1.5f) l->get().remote_values[i] = Color(0,255,255);
+              else if (d < r) l->get().remote_values[i] = Color(0,50,100);
+              else l->get().remote_values[i] = Color(0,0,0);
+            }
+            l->schedule_show();
+            delay(35);
+          }
+
+  - id: anim_listening
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return id(va).is_running();'
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static uint8_t bars[16] = {0};
+                for (int x = 0; x < 16; x++) {
+                  if (bars[x] > 0) bars[x]--;
+                  if (random_uint32() % 100 > 70) bars[x] = 4 + (random_uint32() % 12);
+                  for (int y = 0; y < 16; y++) {
+                    if (y < bars[x]) {
+                      int rr = (y * 255) / 15;
+                      int gg = 255 - ((y * 100) / 15);
+                      l->get().remote_values[x*16+y] = Color(rr, gg, 0);
+                    } else {
+                      l->get().remote_values[x*16+y] = Color(0,0,0);
+                    }
+                  }
+                }
+                l->schedule_show();
+            - delay: 50ms
+
+  - id: anim_thinking
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int a = 0; a < 720; a += 18) {
+            for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,0,0);
+            for (int p = 0; p < 3; p++) {
+              int ang = (a + p*120) % 360;
+              float rad = ang * 0.0174532925f;
+              int x = 8 + (int)(5 * cosf(rad));
+              int y = 8 + (int)(5 * sinf(rad));
+              if (x>=0 && x<16 && y>=0 && y<16) l->get().remote_values[x*16+y] = Color(255,150,0);
+            }
+            l->schedule_show();
+            delay(25);
+          }
+
+  - id: anim_speaking
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: 'return id(va).is_running();'
+          then:
+            - lambda: |-
+                static int wp = 0;
+                auto l = id(matrix);
+                for (int x = 0; x < 16; x++) {
+                  float w1 = 8 + 5 * sinf((x + wp) * 0.5f);
+                  float w2 = 8 + 3 * cosf((x + wp) * 0.7f);
+                  for (int y = 0; y < 16; y++) {
+                    float d1 = fabsf(y - w1);
+                    float d2 = fabsf(y - w2);
+                    if (d1 < 1.5f || d2 < 1.5f) l->get().remote_values[x*16+y] = Color(0,100,255);
+                    else l->get().remote_values[x*16+y] = Color(0,0,10);
+                  }
+                }
+                wp++;
+                l->schedule_show();
+            - delay: 40ms
+
+  - id: anim_error
+    mode: restart
+    then:
+      - repeat:
+          count: 3
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(255,0,0);
+                l->schedule_show();
+            - delay: 200ms
+            - light.turn_off: matrix
+            - delay: 200ms
+
+  # ===== notifications =====
+  - id: show_notification
+    mode: restart
+    then:
+      - script.stop: idle_loop
+      - lambda: |-
+          const std::string t = id(notification_type);
+          if (t == "doorbell") id(notify_doorbell).execute();
+          else if (t == "alarm") id(notify_alarm).execute();
+          else if (t == "success") id(notify_success).execute();
+          else if (t == "warning") id(notify_warning).execute();
+          else if (t == "alert") id(notify_alert).execute();
+          else id(notify_info).execute();
+      - delay: !lambda 'return id(notification_duration_s) * 1000;'
+      - lambda: |-
+          id(has_notification) = false;
+      - script.execute: idle_loop
+
+  - id: notify_doorbell
+    mode: restart
+    then:
+      - repeat:
+          count: 12
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static int pulse = 0;
+                for (int i = 0; i < ${led_count}; i++) {
+                  int x = i/16, y = i%16;
+                  float d = sqrtf((x-8)*(x-8)+(y-8)*(y-8));
+                  float ring = fabsf(d - (pulse % 12));
+                  if (ring < 1.8f) l->get().remote_values[i] = Color(0,200,255);
+                  else l->get().remote_values[i] = Color(0,0,20);
+                }
+                l->schedule_show();
+                pulse++;
+            - delay: 120ms
+
+  - id: notify_alarm
+    mode: restart
+    then:
+      - repeat:
+          count: 20
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static bool on = false;
+                on = !on;
+                const Color c = on ? Color(255,0,0) : Color(30,0,0);
+                for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = c;
+                l->schedule_show();
+            - delay: 200ms
+
+  - id: notify_success
+    mode: restart
+    then:
+      - lambda: |-
+          auto l = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,0,0);
+          int pts[][2] = {{6,8},{7,9},{8,10},{9,9},{10,8},{11,7},{12,6},{13,5}};
+          for (int step = 0; step < 8; step++) {
+            for (int j = 0; j <= step; j++) {
+              int x = pts[j][0], y = pts[j][1];
+              l->get().remote_values[x*16+y] = Color(0,255,100);
+            }
+            l->schedule_show();
+            delay(90);
+          }
+
+  - id: notify_warning
+    mode: restart
+    then:
+      - repeat:
+          count: 25
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static int f = 0;
+                int br = (int)(200 * (0.5f + 0.5f * sinf(f++ * 0.4f)));
+                for (int i = 0; i < ${led_count}; i++) {
+                  int y = i % 16;
+                  if (y >= 6 && y <= 9) l->get().remote_values[i] = Color(br, br/2, 0);
+                  else l->get().remote_values[i] = Color(br/6, br/12, 0);
+                }
+                l->schedule_show();
+            - delay: 90ms
+
+  - id: notify_alert
+    mode: restart
+    then:
+      - repeat:
+          count: 30
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static int f = 0;
+                int br = (int)(255 * (0.5f + 0.5f * sinf(f++ * 0.3f)));
+                for (int i = 0; i < ${led_count}; i++) l->get().remote_values[i] = Color(0,0,0);
+                for (int y = 3; y < 13; y++) {
+                  int w = (y - 3) / 2;
+                  for (int x = 8-w; x <= 8+w; x++) {
+                    if (x>=0 && x<16) l->get().remote_values[x*16+y] = Color(br, br/2, 0);
+                  }
+                }
+                l->schedule_show();
+            - delay: 90ms
+
+  - id: notify_info
+    mode: restart
+    then:
+      - repeat:
+          count: 25
+          then:
+            - lambda: |-
+                auto l = id(matrix);
+                static int f = 0;
+                for (int x = 0; x < 16; x++) {
+                  float wave = 8 + 5 * sinf((x + f) * 0.4f);
+                  for (int y = 0; y < 16; y++) {
+                    float d = fabsf(y - wave);
+                    if (d < 2) l->get().remote_values[x*16+y] = Color(0,150,255);
+                    else if (d < 4) l->get().remote_values[x*16+y] = Color(0,50,100);
+                    else l->get().remote_values[x*16+y] = Color(0,0,20);
+                  }
+                }
+                f++;
+                l->schedule_show();
+            - delay: 80ms
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP"
+    ssid:
+      name: "Wi-Fi"
+
+sensor:
+  - platform: wifi_signal
+    name: "Sinal Wi-Fi"
+    update_interval: 60s
+

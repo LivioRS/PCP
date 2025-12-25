@@ -1,0 +1,105 @@
+esphome:
+  name: led-matrix-test-cores3
+  friendly_name: "LED Matrix Test CoreS3"
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_on:
+          id: matrix
+          brightness: 30%
+
+esp32:
+  board: m5stack-cores3
+  framework:
+    type: esp-idf
+    version: recommended
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "CoreS3-Matrix-Test"
+    password: !secret ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  password: !secret ota_password
+
+substitutions:
+  led_pin: "GPIO2"      # CoreS3 Grove A (fio amarelo). Se não acender, teste GPIO1.
+  led_count: "256"      # Matriz 16x16
+
+light:
+  - platform: neopixelbus
+    id: matrix
+    name: "Matriz 16x16"
+    type: GRB
+    variant: WS2812
+    pin: ${led_pin}
+    num_leds: ${led_count}
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    method:
+      type: esp32_rmt
+      channel: 0
+    effects:
+      - addressable_rainbow:
+          name: "Rainbow"
+          speed: 10
+          width: 32
+      - addressable_scan:
+          name: "Scan"
+          move_interval: 35ms
+          scan_width: 8
+
+button:
+  - platform: template
+    name: "🔴 Tudo vermelho"
+    on_press:
+      - lambda: |-
+          auto light = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) {
+            light->get().remote_values[i] = Color(255, 0, 0);
+          }
+          light->schedule_show();
+  - platform: template
+    name: "🟢 Tudo verde"
+    on_press:
+      - lambda: |-
+          auto light = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) {
+            light->get().remote_values[i] = Color(0, 255, 0);
+          }
+          light->schedule_show();
+  - platform: template
+    name: "🔵 Tudo azul"
+    on_press:
+      - lambda: |-
+          auto light = id(matrix);
+          for (int i = 0; i < ${led_count}; i++) {
+            light->get().remote_values[i] = Color(0, 0, 255);
+          }
+          light->schedule_show();
+  - platform: template
+    name: "🌈 Rainbow (efeito)"
+    on_press:
+      - light.turn_on:
+          id: matrix
+          brightness: 30%
+          effect: "Rainbow"
+  - platform: template
+    name: "➡️ Scan (efeito)"
+    on_press:
+      - light.turn_on:
+          id: matrix
+          brightness: 30%
+          effect: "Scan"
+
