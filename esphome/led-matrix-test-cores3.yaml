@@ -62,30 +62,33 @@ button:
   - platform: template
     name: "🔴 Tudo vermelho"
     on_press:
-      - lambda: |-
-          auto light = id(matrix);
-          for (int i = 0; i < ${led_count}; i++) {
-            light->get().remote_values[i] = Color(255, 0, 0);
-          }
-          light->schedule_show();
+      - light.addressable_set:
+          id: matrix
+          range_from: 0
+          range_to: 255
+          red: 100%
+          green: 0%
+          blue: 0%
   - platform: template
     name: "🟢 Tudo verde"
     on_press:
-      - lambda: |-
-          auto light = id(matrix);
-          for (int i = 0; i < ${led_count}; i++) {
-            light->get().remote_values[i] = Color(0, 255, 0);
-          }
-          light->schedule_show();
+      - light.addressable_set:
+          id: matrix
+          range_from: 0
+          range_to: 255
+          red: 0%
+          green: 100%
+          blue: 0%
   - platform: template
     name: "🔵 Tudo azul"
     on_press:
-      - lambda: |-
-          auto light = id(matrix);
-          for (int i = 0; i < ${led_count}; i++) {
-            light->get().remote_values[i] = Color(0, 0, 255);
-          }
-          light->schedule_show();
+      - light.addressable_set:
+          id: matrix
+          range_from: 0
+          range_to: 255
+          red: 0%
+          green: 0%
+          blue: 100%
   - platform: template
     name: "🌈 Rainbow (efeito)"
     on_press:
