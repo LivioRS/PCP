@@ -1,0 +1,23 @@
+title: "Assistente CoreS3"
+views:
+  - title: "CoreS3"
+    path: cores3
+    cards:
+      - type: entities
+        title: "Controles"
+        entities:
+          - switch.voice_assistant_cores3_assistente_ativo
+          - select.voice_assistant_cores3_idle_modo
+          - button.voice_assistant_cores3_iniciar_assist_manual
+          - button.voice_assistant_cores3_teste_vermelho
+          - button.voice_assistant_cores3_teste_verde
+          - button.voice_assistant_cores3_teste_azul
+          - button.voice_assistant_cores3_teste_notificacao_doorbell
+          - button.voice_assistant_cores3_reiniciar
+      - type: entities
+        title: "Rede"
+        entities:
+          - sensor.voice_assistant_cores3_sinal_wi_fi
+          - text_sensor.voice_assistant_cores3_ip
+          - text_sensor.voice_assistant_cores3_wi_fi
+

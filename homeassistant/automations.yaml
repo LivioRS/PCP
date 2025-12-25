@@ -1,0 +1,59 @@
+# ========================================
+# Automações (exemplos) para o CoreS3
+# Ajuste os entity_id para os seus.
+# ========================================
+
+# Atualiza o "clima" do dispositivo a cada 5 minutos
+- id: cores3_update_weather
+  alias: "CoreS3: atualizar clima (matriz)"
+  mode: restart
+  trigger:
+    - platform: time_pattern
+      minutes: "/5"
+    - platform: homeassistant
+      event: start
+  action:
+    - service: esphome.voice_assistant_cores3_update_weather
+      data:
+        temperature: "{{ state_attr('weather.home', 'temperature') | float(25) }}"
+        humidity: "{{ state_attr('weather.home', 'humidity') | int(50) }}"
+        condition: >
+          {% set c = states('weather.home') %}
+          {% if c in ['sunny','clear-night'] %} sunny
+          {% elif c in ['cloudy','partlycloudy'] %} cloudy
+          {% elif c in ['rainy','pouring'] %} rainy
+          {% elif c in ['lightning','lightning-rainy'] %} stormy
+          {% elif c in ['snowy','snowy-rainy'] %} snowy
+          {% else %} cloudy
+          {% endif %}
+
+# Exemplo: campainha -> notificação visual
+- id: cores3_notify_doorbell
+  alias: "CoreS3: campainha (visual)"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.campainha
+      to: "on"
+  action:
+    - service: esphome.voice_assistant_cores3_notify
+      data:
+        message: "Alguém na porta"
+        type: "doorbell"
+        duration: 8
+        priority: 2
+
+# Exemplo: alarme -> notificação crítica
+- id: cores3_notify_alarm
+  alias: "CoreS3: alarme (crítico)"
+  trigger:
+    - platform: state
+      entity_id: alarm_control_panel.casa
+      to: "triggered"
+  action:
+    - service: esphome.voice_assistant_cores3_notify
+      data:
+        message: "ALARME DISPARADO!"
+        type: "alarm"
+        duration: 15
+        priority: 3
+

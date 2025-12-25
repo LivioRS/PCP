@@ -1,0 +1,20 @@
+send_cores3_notification:
+  alias: "CoreS3: enviar notificação (manual)"
+  mode: queued
+  fields:
+    message:
+      example: "Teste"
+    type:
+      example: "info"
+    duration:
+      example: 5
+    priority:
+      example: 1
+  sequence:
+    - service: esphome.voice_assistant_cores3_notify
+      data:
+        message: "{{ message }}"
+        type: "{{ type | default('info') }}"
+        duration: "{{ duration | default(5) }}"
+        priority: "{{ priority | default(1) }}"
+
