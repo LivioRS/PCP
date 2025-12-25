@@ -138,18 +138,16 @@ output:
     pin: ${spk_amp_enable_pin}
 
 light:
-  - platform: neopixelbus
+  - platform: esp32_rmt_led_strip
     id: matrix
     name: "Matriz 16x16"
-    type: GRB
-    variant: WS2812
     pin: ${led_pin}
     num_leds: ${led_count}
+    rgb_order: GRB
+    chipset: WS2812
+    rmt_channel: 0
     restore_mode: ALWAYS_OFF
     default_transition_length: 0s
-    method:
-      type: esp32_rmt
-      channel: 0
     color_correct: [70%, 70%, 70%]
     gamma_correct: 2.8
 
@@ -456,7 +454,8 @@ script:
                 static uint8_t bars[16] = {0};
                 for (int x = 0; x < 16; x++) {
                   if (bars[x] > 0) bars[x]--;
-                  if (random_uint32() % 100 > 70) bars[x] = 4 + (random_uint32() % 12);
+                  const uint32_t r = esp_random();
+                  if (r % 100 > 70) bars[x] = 4 + (r % 12);
                   for (int y = 0; y < 16; y++) {
                     if (y < bars[x]) {
                       int rr = (y * 255) / 15;
